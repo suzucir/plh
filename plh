@@ -1,0 +1,83 @@
+#!/etc/profiles/per-user/suzu/bin/python
+import sys
+import polars as pl
+from types import ModuleType
+import pydoc
+import os
+
+def get_attribute(obj, attr_path):
+    """
+    指定されたパスに従ってオブジェクトの属性を取得する
+    例: "DataFrame.filter" -> pl.DataFrame.filter
+    """
+    current = obj
+    for attr in attr_path.split('.'):
+        try:
+            current = getattr(current, attr)
+        except AttributeError:
+            return None
+    return current
+
+def format_help_text(attr_path, attr):
+    """
+    ヘルプテキストを整形する
+    """
+    output = []
+    
+    # モジュールの場合は特別な処理
+    if isinstance(attr, ModuleType):
+        output.append(f"Module: {attr_path}")
+        output.append("\nAvailable attributes:")
+        for name in dir(attr):
+            if not name.startswith('_'):
+                output.append(f"- {name}")
+        return '\n'.join(output)
+
+    # 通常の属性の場合
+    output.append(f"Help for polars.{attr_path}:")
+    output.append("-" * 40)
+    
+    help_text = attr.__doc__
+    if help_text:
+        output.append(help_text)
+    else:
+        output.append(f"No documentation available for '{attr_path}'")
+    
+    return '\n'.join(output)
+
+def display_help(attr_path):
+    """
+    指定された属性のヘルプ情報を表示する
+    """
+    try:
+        attr = get_attribute(pl, attr_path)
+        if attr is None:
+            print(f"Error: '{attr_path}' is not found in polars", file=sys.stderr)
+            return 1
+
+        # ヘルプテキストを整形
+        help_text = format_help_text(attr_path, attr)
+        
+        # 環境変数PAGERが設定されていない場合は'less'を使用
+        if not os.environ.get('PAGER'):
+            os.environ['PAGER'] = 'less -R'
+            
+        # pydoc.pagerを使用してページャーで表示
+        pydoc.pager(help_text)
+        return 0
+
+    except Exception as e:
+        print(f"Error: {str(e)}", file=sys.stderr)
+        return 1
+
+def main():
+    if len(sys.argv) != 2:
+        print("Usage: plh <attribute_path>", file=sys.stderr)
+        print("Example: plh DataFrame.filter", file=sys.stderr)
+        return 1
+
+    attr_path = sys.argv[1]
+    return display_help(attr_path)
+
+if __name__ == "__main__":
+    sys.exit(main())
