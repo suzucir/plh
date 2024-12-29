@@ -4,6 +4,7 @@ import polars as pl
 from types import ModuleType
 import pydoc
 import os
+import inspect
 from rich.console import Console
 from rich.syntax import Syntax
 from rich.markdown import Markdown
@@ -11,7 +12,8 @@ from rich.panel import Panel
 from rich.text import Text
 
 # リッチコンソールの初期化
-console = Console()
+console = Console(stderr=True)  # エラー出力用
+main_console = Console()  # 標準出力用
 
 def get_attribute(obj, attr_path):
     """
@@ -30,7 +32,6 @@ def format_signature(attr):
     """
     関数やメソッドのシグネチャを取得する
     """
-    import inspect
     try:
         if inspect.isfunction(attr) or inspect.ismethod(attr):
             return str(inspect.signature(attr))
@@ -38,23 +39,24 @@ def format_signature(attr):
     except ValueError:
         return ""
 
-def format_help_text(attr_path, attr):
+def create_rich_output(attr_path, attr):
     """
-    ヘルプテキストを整形する
+    リッチテキスト形式の出力を生成する
     """
-    output = []
-    
     # ヘッダーの作成
     header = Text()
     header.append("Help for ", style="bold white")
     header.append(f"polars.{attr_path}", style="bold cyan")
-    output.append(str(header))
-    output.append("=" * 40)
+    
+    output = []
+    output.append(header)
+    output.append(Text("=" * 40))
     
     # モジュールの場合は特別な処理
     if isinstance(attr, ModuleType):
-        output.append(Panel(f"[bold]Module:[/bold] {attr_path}", border_style="blue"))
-        output.append("\n[bold cyan]Available attributes:[/bold cyan]")
+        module_panel = Panel(f"[bold]Module:[/bold] {attr_path}", border_style="blue")
+        output.append(module_panel)
+        output.append(Text("Available attributes:", style="bold cyan"))
         
         # 属性を種類ごとに分類
         methods = []
@@ -67,28 +69,29 @@ def format_help_text(attr_path, attr):
                 
             item = getattr(attr, name)
             if inspect.isfunction(item):
-                methods.append(f"[green]• {name}()[/green]")
+                methods.append(Text(f"• {name}()", style="green"))
             elif inspect.isclass(item):
-                classes.append(f"[yellow]• {name}[/yellow]")
+                classes.append(Text(f"• {name}", style="yellow"))
             else:
-                properties.append(f"[blue]• {name}[/blue]")
+                properties.append(Text(f"• {name}", style="blue"))
         
         if classes:
-            output.append("\n[bold]Classes:[/bold]")
+            output.append(Text("\nClasses:", style="bold"))
             output.extend(classes)
         if methods:
-            output.append("\n[bold]Methods:[/bold]")
+            output.append(Text("\nMethods:", style="bold"))
             output.extend(methods)
         if properties:
-            output.append("\n[bold]Properties:[/bold]")
+            output.append(Text("\nProperties:", style="bold"))
             output.extend(properties)
             
     else:
         # シグネチャの表示
         sig = format_signature(attr)
         if sig:
-            output.append(Panel(f"[bold cyan]{attr_path}[/bold cyan][yellow]{sig}[/yellow]", 
-                              border_style="blue"))
+            sig_panel = Panel(f"[bold cyan]{attr_path}[/bold cyan][yellow]{sig}[/yellow]", 
+                            border_style="blue")
+            output.append(sig_panel)
         
         # ドキュメントの表示
         doc = attr.__doc__
@@ -99,18 +102,19 @@ def format_help_text(attr_path, attr):
                 if i % 2 == 0:  # 通常のテキスト部分
                     # Markdownとして解釈可能な部分を検出
                     if any(marker in part for marker in ['#', '-', '*', '>']):
-                        output.append(str(Markdown(part)))
+                        output.append(Markdown(part))
                     else:
-                        output.append(part)
+                        output.append(Text(part))
                 else:  # コードブロック
                     if part.startswith('python'):
                         part = part[6:]  # "python" を削除
                     syntax = Syntax(part.strip(), "python", theme="monokai")
-                    output.append(str(syntax))
+                    output.append(syntax)
         else:
-            output.append(f"[red]No documentation available for '{attr_path}'[/red]")
+            output.append(Text(f"No documentation available for '{attr_path}'", 
+                             style="red"))
     
-    return '\n'.join(output)
+    return output
 
 def display_help(attr_path):
     """
@@ -119,29 +123,41 @@ def display_help(attr_path):
     try:
         attr = get_attribute(pl, attr_path)
         if attr is None:
-            console.print(f"[red]Error:[/red] '{attr_path}' is not found in polars", 
-                         file=sys.stderr)
+            console.print(f"[red]Error:[/red] '{attr_path}' is not found in polars")
             return 1
 
-        # ヘルプテキストを整形
-        help_text = format_help_text(attr_path, attr)
+        # リッチテキスト出力を生成
+        rich_output = create_rich_output(attr_path, attr)
+        
+        # 一時ファイルに出力を保存
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as tmp:
+            # リッチテキストをファイルに書き込む
+            with Console(file=tmp, force_terminal=True) as tmp_console:
+                for item in rich_output:
+                    tmp_console.print(item)
+            tmp_path = tmp.name
         
         # 環境変数PAGERが設定されていない場合は'less -R'を使用
         if not os.environ.get('PAGER'):
             os.environ['PAGER'] = 'less -R'
-            
-        # pydoc.pagerを使用してページャーで表示
-        pydoc.pager(help_text)
+        
+        # ページャーで表示
+        with open(tmp_path, 'r') as f:
+            pydoc.pager(f.read())
+        
+        # 一時ファイルを削除
+        os.unlink(tmp_path)
         return 0
 
     except Exception as e:
-        console.print(f"[red]Error:[/red] {str(e)}", file=sys.stderr)
+        console.print(f"[red]Error:[/red] {str(e)}")
         return 1
 
 def main():
     if len(sys.argv) != 2:
-        console.print("[bold red]Usage:[/bold red] plh <attribute_path>", file=sys.stderr)
-        console.print("[bold blue]Example:[/bold blue] plh DataFrame.filter", file=sys.stderr)
+        console.print("[bold red]Usage:[/bold red] plh <attribute_path>")
+        console.print("[bold blue]Example:[/bold blue] plh DataFrame.filter")
         return 1
 
     attr_path = sys.argv[1]
