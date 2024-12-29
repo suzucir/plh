@@ -12,7 +12,9 @@ A command-line tool to quickly access Polars documentation from your terminal.
 ## Prerequisites
 
 - Python 3.x
-- Polars library
+- Required packages (install via `pip install -r requirements.txt`):
+  - Polars
+  - Rich (for syntax highlighting and beautiful output)
 
 ## Installation
 
