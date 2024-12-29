@@ -4,6 +4,14 @@ import polars as pl
 from types import ModuleType
 import pydoc
 import os
+from rich.console import Console
+from rich.syntax import Syntax
+from rich.markdown import Markdown
+from rich.panel import Panel
+from rich.text import Text
+
+# リッチコンソールの初期化
+console = Console()
 
 def get_attribute(obj, attr_path):
     """
@@ -18,30 +26,89 @@ def get_attribute(obj, attr_path):
             return None
     return current
 
+def format_signature(attr):
+    """
+    関数やメソッドのシグネチャを取得する
+    """
+    import inspect
+    try:
+        if inspect.isfunction(attr) or inspect.ismethod(attr):
+            return str(inspect.signature(attr))
+        return ""
+    except ValueError:
+        return ""
+
 def format_help_text(attr_path, attr):
     """
     ヘルプテキストを整形する
     """
     output = []
     
+    # ヘッダーの作成
+    header = Text()
+    header.append("Help for ", style="bold white")
+    header.append(f"polars.{attr_path}", style="bold cyan")
+    output.append(str(header))
+    output.append("=" * 40)
+    
     # モジュールの場合は特別な処理
     if isinstance(attr, ModuleType):
-        output.append(f"Module: {attr_path}")
-        output.append("\nAvailable attributes:")
+        output.append(Panel(f"[bold]Module:[/bold] {attr_path}", border_style="blue"))
+        output.append("\n[bold cyan]Available attributes:[/bold cyan]")
+        
+        # 属性を種類ごとに分類
+        methods = []
+        properties = []
+        classes = []
+        
         for name in dir(attr):
-            if not name.startswith('_'):
-                output.append(f"- {name}")
-        return '\n'.join(output)
-
-    # 通常の属性の場合
-    output.append(f"Help for polars.{attr_path}:")
-    output.append("-" * 40)
-    
-    help_text = attr.__doc__
-    if help_text:
-        output.append(help_text)
+            if name.startswith('_'):
+                continue
+                
+            item = getattr(attr, name)
+            if inspect.isfunction(item):
+                methods.append(f"[green]• {name}()[/green]")
+            elif inspect.isclass(item):
+                classes.append(f"[yellow]• {name}[/yellow]")
+            else:
+                properties.append(f"[blue]• {name}[/blue]")
+        
+        if classes:
+            output.append("\n[bold]Classes:[/bold]")
+            output.extend(classes)
+        if methods:
+            output.append("\n[bold]Methods:[/bold]")
+            output.extend(methods)
+        if properties:
+            output.append("\n[bold]Properties:[/bold]")
+            output.extend(properties)
+            
     else:
-        output.append(f"No documentation available for '{attr_path}'")
+        # シグネチャの表示
+        sig = format_signature(attr)
+        if sig:
+            output.append(Panel(f"[bold cyan]{attr_path}[/bold cyan][yellow]{sig}[/yellow]", 
+                              border_style="blue"))
+        
+        # ドキュメントの表示
+        doc = attr.__doc__
+        if doc:
+            # コードブロックを検出して構文ハイライトを適用
+            parts = doc.split('```')
+            for i, part in enumerate(parts):
+                if i % 2 == 0:  # 通常のテキスト部分
+                    # Markdownとして解釈可能な部分を検出
+                    if any(marker in part for marker in ['#', '-', '*', '>']):
+                        output.append(str(Markdown(part)))
+                    else:
+                        output.append(part)
+                else:  # コードブロック
+                    if part.startswith('python'):
+                        part = part[6:]  # "python" を削除
+                    syntax = Syntax(part.strip(), "python", theme="monokai")
+                    output.append(str(syntax))
+        else:
+            output.append(f"[red]No documentation available for '{attr_path}'[/red]")
     
     return '\n'.join(output)
 
@@ -52,13 +119,14 @@ def display_help(attr_path):
     try:
         attr = get_attribute(pl, attr_path)
         if attr is None:
-            print(f"Error: '{attr_path}' is not found in polars", file=sys.stderr)
+            console.print(f"[red]Error:[/red] '{attr_path}' is not found in polars", 
+                         file=sys.stderr)
             return 1
 
         # ヘルプテキストを整形
         help_text = format_help_text(attr_path, attr)
         
-        # 環境変数PAGERが設定されていない場合は'less'を使用
+        # 環境変数PAGERが設定されていない場合は'less -R'を使用
         if not os.environ.get('PAGER'):
             os.environ['PAGER'] = 'less -R'
             
@@ -67,13 +135,13 @@ def display_help(attr_path):
         return 0
 
     except Exception as e:
-        print(f"Error: {str(e)}", file=sys.stderr)
+        console.print(f"[red]Error:[/red] {str(e)}", file=sys.stderr)
         return 1
 
 def main():
     if len(sys.argv) != 2:
-        print("Usage: plh <attribute_path>", file=sys.stderr)
-        print("Example: plh DataFrame.filter", file=sys.stderr)
+        console.print("[bold red]Usage:[/bold red] plh <attribute_path>", file=sys.stderr)
+        console.print("[bold blue]Example:[/bold blue] plh DataFrame.filter", file=sys.stderr)
         return 1
 
     attr_path = sys.argv[1]
