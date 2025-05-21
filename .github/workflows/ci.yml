@@ -1,0 +1,36 @@
+name: CI
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      - name: Install dependencies
+        run: pip install polars rich
+      - name: Make plh executable
+        run: chmod +x plh
+      - name: Test plh with no arguments
+        run: |
+          if ./plh; then
+            echo "Error: plh succeeded unexpectedly"
+            exit 1
+          fi
+          ./plh 2>&1 | grep "Usage:" || (echo "Error: Usage message not found" && exit 1)
+      - name: Test plh with valid attribute
+        run: ./plh DataFrame.filter
+      - name: Test plh with invalid attribute
+        run: |
+          if ./plh NonExistent.attribute; then
+            echo "Error: plh succeeded unexpectedly with invalid attribute"
+            exit 1
+          fi
+          ./plh NonExistent.attribute 2>&1 | grep "Error:" || (echo "Error: Error message not found for invalid attribute" && exit 1)
